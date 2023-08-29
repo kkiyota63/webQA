@@ -1,0 +1,10 @@
+streamlit
+openai
+beautifulsoup4
+requests
+streamlit-chat
+langchain
+PyPDF2
+langchain
+qdrant-client
+tiktoken
