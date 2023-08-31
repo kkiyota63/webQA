@@ -4,32 +4,31 @@ import streamlit as st
 from langchain.chat_models import ChatOpenAI
 from langchain.llms import OpenAI
 from langchain.callbacks import get_openai_callback
-
-from PyPDF2 import PdfReader
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import Qdrant
 from langchain.chains import RetrievalQA
-
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams
-
 import requests
 from bs4 import BeautifulSoup
 
+#Qdrantというベクトルデータベースのローカルパス
 QDRANT_PATH = "./local_qdrant"
+#Qdrant内で使用するコレクション（データセット）の名前を定義
 COLLECTION_NAME = "my_collection_2"
 
-
+#初期ページの設定
 def init_page():
     st.set_page_config(
         page_title="Ask",
         page_icon="?"
     )
+    #サイドバーの名前
     st.sidebar.title("Nav")
     st.session_state.costs = []
 
-
+#モデルを選択する関数
 def select_model():
     model = st.sidebar.radio("Choose a model:", ("GPT-3.5", "GPT-3.5-16k", "GPT-4"))
     if model == "GPT-3.5":
@@ -38,30 +37,11 @@ def select_model():
         st.session_state.model_name = "gpt-3.5-turbo-16k"
     else:
         st.session_state.model_name = "gpt-4"
-    
-    # 300: ?{????O??w????g?[?N???? (???????)
+    #選択されたモデルのコンテキストサイズ（最大トークン数）をセッション状態に保存
     st.session_state.max_token = OpenAI.modelname_to_contextsize(st.session_state.model_name) - 300
     return ChatOpenAI(temperature=0, model_name=st.session_state.model_name)
 
-
-def get_pdf_text():
-    uploaded_file = st.file_uploader(
-        label='Upload your PDF here?',
-        type='pdf'
-    )
-    if uploaded_file:
-        pdf_reader = PdfReader(uploaded_file)
-        text = '\n\n'.join([page.extract_text() for page in pdf_reader.pages])
-        text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-            model_name="text-embedding-ada-002",
-            chunk_size=500,
-            chunk_overlap=0,
-        )
-        return text_splitter.split_text(text)
-    else:
-        return None
-
-
+#Qdrantデータベースに接続するための関数
 def load_qdrant():
     client = QdrantClient(path=QDRANT_PATH)
 
@@ -82,26 +62,17 @@ def load_qdrant():
     )
 
 
-def build_vector_store(pdf_text):
-    qdrant = load_qdrant()
-    qdrant.add_texts(pdf_text)
+# def build_vector_store(pdf_text):
+#     qdrant = load_qdrant()
+#     qdrant.add_texts(pdf_text)
 
-    # ??????????????B??????????x?N?g??DB?????????????
-    # LangChain ?? Document Loader ??p???????? `from_documents` ?????
-    # Qdrant.from_texts(
-    #     pdf_text,
-    #     OpenAIEmbeddings(),
-    #     path="./local_qdrant",
-    #     collection_name="my_documents",
-    # )
-
-
+#質問応答（QA）モデルを構築するための関数
 def build_qa_model(llm):
     qdrant = load_qdrant()
+    #Qdrantオブジェクトからretriever（情報検索器）を作成
+    # 検索タイプは"similarity"（類似性）で、上位10件の結果を返すよう設定
     retriever = qdrant.as_retriever(
-        # "mmr",  "similarity_score_threshold" ????????
         search_type="similarity",
-        # ??????????��???? (default: 4)
         search_kwargs={"k":10}
     )
     return RetrievalQA.from_chain_type(
@@ -112,26 +83,15 @@ def build_qa_model(llm):
         verbose=True
     )
 
-
-def page_pdf_upload_and_build_vector_db():
-    st.title("PDF Upload")
-    container = st.container()
-    with container:
-        pdf_text = get_pdf_text()
-        if pdf_text:
-            with st.spinner("Loading PDF ..."):
-                build_vector_store(pdf_text)
-
-
+#質問応答（QA）モデルを用いて質問に回答を生成するための関数
 def ask(qa, query):
     with get_openai_callback() as cb:
-        # query / result / source_documents
         answer = qa(query)
 
     return answer, cb.total_cost
 
-
-def page_ask_my_pdf():
+#askページの設定
+def page_ask():
     st.title("Ask")
 
     llm = select_model()
@@ -157,6 +117,7 @@ def page_ask_my_pdf():
                 st.write(answer)
 
 
+#URLからテキストデータの取得を行う関数
 def get_article_text(url):
     # URLからHTMLを取得
     r = requests.get(url)
@@ -176,7 +137,7 @@ def get_article_text(url):
     
     return text_splitter.split_text(text)
 
-
+#URLアップロードページの設定
 def page_url_upload_and_build_vector_db():
     st.title("URL Upload")
     container = st.container()
@@ -187,20 +148,18 @@ def page_url_upload_and_build_vector_db():
                 article_text = get_article_text(url)
                 build_vector_store(article_text)
 
+#メイン関数
 def main():
     init_page()
-
-    selection = st.sidebar.radio("Go to", ["PDF Upload", "URL Upload", "Ask My Texts"])
-    
-    if selection == "PDF Upload":
-        page_pdf_upload_and_build_vector_db()
-        
-    elif selection == "URL Upload":
+    #サイドバーでページを選択
+    selection = st.sidebar.radio("Go to", ["URL Upload", "Ask My Texts"])   
+    if selection == "URL Upload":
         page_url_upload_and_build_vector_db()
 
     elif selection == "Ask My Texts":
-        page_ask_my_pdf()  # この関数名も適宜変更できます
+        page_ask() 
 
+    #コストを表示
     costs = st.session_state.get('costs', [])
     st.sidebar.markdown("## Costs")
     st.sidebar.markdown(f"**Total cost: ${sum(costs):.5f}**")
